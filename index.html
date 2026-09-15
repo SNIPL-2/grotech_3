@@ -232,7 +232,7 @@ legend{font-family:'Barlow Condensed';font-weight:600;color:var(--navy);padding:
   <section id="products" style="display:none">
     <h2>Products</h2>
     <div class="search-bar">
-      <input id="searchInput" placeholder="Search by item code, name or category..." onkeydown="if(event.key==='Enter')performSearch()"/>
+      <input id="searchInput" placeholder="Search by item code, name or category..." oninput="performSearch()" onkeydown="if(event.key==='Enter')performSearch()"/>
       <button onclick="performSearch()">Search</button>
     </div>
     <div id="breadcrumb"></div>
@@ -276,7 +276,7 @@ legend{font-family:'Barlow Condensed';font-weight:600;color:var(--navy);padding:
     <div class="note" id="cart-note">Get a special quote for the products below.</div>
     <div id="cart-add-product-panel" class="add-product-panel" style="display:none">
       <div class="search-bar">
-        <input id="cartSearchInput" placeholder="Search by item code, name or category..." onkeydown="if(event.key==='Enter')performCartSearch()"/>
+        <input id="cartSearchInput" placeholder="Search by item code, name or category..." oninput="performCartSearch()" onkeydown="if(event.key==='Enter')performCartSearch()"/>
         <button onclick="performCartSearch()">Search</button>
       </div>
       <div id="cart-search-results"></div>
@@ -375,7 +375,7 @@ legend{font-family:'Barlow Condensed';font-weight:600;color:var(--navy);padding:
         </div>
         <div id="pf-add-product-panel" class="add-product-panel" style="display:none">
           <div class="search-bar">
-            <input id="pfSearchInput" placeholder="Search by item code, name or category..." onkeydown="if(event.key==='Enter')performProformaSearch()"/>
+            <input id="pfSearchInput" placeholder="Search by item code, name or category..." oninput="performProformaSearch()" onkeydown="if(event.key==='Enter')performProformaSearch()"/>
             <button onclick="performProformaSearch()">Search</button>
           </div>
           <div id="pf-search-results"></div>
@@ -479,6 +479,11 @@ legend{font-family:'Barlow Condensed';font-weight:600;color:var(--navy);padding:
     <div class="form-row">
       <div class="col"><label>Quantity *</label><input id="ci-qty" type="number" min="1" value="1"/></div>
       <div class="col"><label>Unit</label><input id="ci-unit" value="Pcs" placeholder="Pcs / Dozen / Set..."/></div>
+    </div>
+    <div class="form-row">
+      <div class="col"><label>Variant Code (optional)</label><input id="ci-variant" placeholder="e.g. V1"/></div>
+      <div class="col"><label>HSN Code (optional)</label><input id="ci-hsn"/></div>
+      <div class="col"><label>GST % (optional)</label><input id="ci-gst" type="number" min="0" step="0.01"/></div>
     </div>
     <div class="err" id="ci-err"></div>
     <div class="actions" style="justify-content:flex-end">
@@ -739,7 +744,14 @@ function renderBreadcrumb(level){
   const breadcrumb = document.getElementById('breadcrumb');
   let html = '';
   if(level==='category') html = `<button class="back-btn" onclick="renderCategories()">⬅ Back to Categories</button>`;
-  else if(level==='item') html = `<button class="back-btn" onclick="renderItems('${currentCategory.replace(/'/g,"\\'")}')">⬅ Back to ${currentCategory}</button>`;
+  else if(level==='item'){
+    // Guard against currentCategory being null (e.g. item opened from search
+    // results, or from a code shared with multiple categories) — calling
+    // .replace() on null was throwing a TypeError and breaking this click.
+    if(currentSearchResults) html = `<button class="back-btn" onclick="reopenSearchResults()">⬅ Back to Search Results</button>`;
+    else if(currentCategory) html = `<button class="back-btn" onclick="renderItems('${currentCategory.replace(/'/g,"\\'")}')">⬅ Back to ${currentCategory}</button>`;
+    else html = `<button class="back-btn" onclick="renderCategories()">⬅ Back to Categories</button>`;
+  }
   else if(level==='search') html = `<button class="back-btn" onclick="clearSearch()">⬅ Back to Home</button>`;
   breadcrumb.innerHTML = html;
 }
@@ -760,7 +772,7 @@ function renderCategories(){
   });
 }
 function renderItems(category){
-  currentCategory=category; renderBreadcrumb('category');
+  currentCategory=category; currentItemCode=null; currentSearchResults=null; renderBreadcrumb('category');
   const container = document.getElementById('catalogue');
   container.innerHTML = `<h2 style="margin-top:14px">${category}</h2><div class="grid"></div>`;
   const grid = container.querySelector('.grid');
@@ -827,6 +839,7 @@ function confirmAddToCart(){
   if(!pendingCartItem) { closeAddToCartModal(); return; }
   addToCart({ ...pendingCartItem, qty });
   closeAddToCartModal();
+  refreshCartIfVisible();
 }
 
 /* ================= CART (role-split) ================= */
@@ -835,6 +848,13 @@ function getCart(){ try{ return JSON.parse(localStorage.getItem(cartKey())||'[]'
 function saveCart(cart){ localStorage.setItem(cartKey(), JSON.stringify(cart)); updateCartCount(); }
 function updateCartCount(){ const n=getCart().reduce((s,i)=>s+Number(i.qty||0),0); document.getElementById('cart-count').innerText=n; }
 updateCartCount();
+
+// Re-renders the cart list in place when the Cart section is already the one
+// on screen (e.g. adding a product from the in-cart search panel), so newly
+// added items show up immediately instead of only after navigating away and back.
+function refreshCartIfVisible(){
+  if(document.getElementById('cart').style.display==='block') renderCart(true);
+}
 
 function addToCart(item){
   const cart = getCart();
@@ -877,14 +897,14 @@ function performCartSearch(){
   if(matches.length===0){ results.innerHTML='<p>No matching products found in our catalogue.</p>'; return; }
   const isAdmin = role==='admin';
   const shown = matches.slice(0,50);
-  let html = `<table class="data-table"><tr><th>Item</th><th>Variant</th><th>Description</th>${isAdmin?'<th>Price</th>':''}<th>Unit</th><th></th></tr>`;
+  let html = `<table class="data-table"><tr><th>Item</th><th>Variant</th><th>Description</th>${isAdmin?'<th>Price</th><th>GST</th>':''}<th>Unit</th><th></th></tr>`;
   shown.forEach(entry=>{
     const priceNum = entry['_price'];
     html += `<tr>
       <td>${entry['Item Name']||''}<div class="meta">${entry['Item Code']||''}</div></td>
       <td>${entry['Variant Code']||''}</td>
       <td>${entry['Description']||''}</td>
-      ${isAdmin?`<td class="num price">${entry['Price/Unit']||''}</td>`:''}
+      ${isAdmin?`<td class="num price">${entry['Price/Unit']||''}</td><td class="num">${entry['GST']||0}%</td>`:''}
       <td>${entry['Unit']||''}</td>
       <td><button class="btn-sm btn" onclick="addToCartPrompt('${encodeURIComponent(entry['Item Code'])}','${encodeURIComponent(entry['Variant Code']||'')}','${encodeURIComponent(entry['Description']||'')}','${encodeURIComponent(String(priceNum))}','${encodeURIComponent(entry['HSN Code']||'')}','${encodeURIComponent(String(entry['_gst']))}')">Add</button></td>
     </tr>`;
@@ -900,6 +920,9 @@ function openCustomItemModal(){
   document.getElementById('ci-desc').value='';
   document.getElementById('ci-qty').value=1;
   document.getElementById('ci-unit').value='Pcs';
+  document.getElementById('ci-variant').value='';
+  document.getElementById('ci-hsn').value='';
+  document.getElementById('ci-gst').value='';
   document.getElementById('ci-err').innerText='';
   document.getElementById('custom-item-modal').style.display='flex';
 }
@@ -909,40 +932,48 @@ function confirmCustomItem(){
   const desc = document.getElementById('ci-desc').value.trim();
   const qty = Number(document.getElementById('ci-qty').value);
   const unit = document.getElementById('ci-unit').value.trim() || 'Pcs';
+  const variantCode = document.getElementById('ci-variant').value.trim() || 'Custom';
+  const hsn = document.getElementById('ci-hsn').value.trim();
+  const gst = Number(document.getElementById('ci-gst').value) || 0;
   const errEl = document.getElementById('ci-err');
   if(!name){ errEl.innerText='Please enter an item name.'; return; }
   if(!qty || qty<=0 || !Number.isFinite(qty)){ errEl.innerText='Please enter a valid quantity.'; return; }
   const cart = getCart();
   cart.push({
-    itemCode:'CUSTOM-'+Date.now(), itemName:name, variantCode:'Custom', description:desc,
-    unit, qty, img:'', originalPrice:0, manualPrice:0, hsn:'', gst:0, isCustom:true
+    itemCode:'CUSTOM-'+Date.now(), itemName:name, variantCode, description:desc,
+    unit, qty, img:'', originalPrice:0, manualPrice:0, hsn, gst, isCustom:true
   });
   saveCart(cart);
   closeCustomItemModal();
   showToast('Custom item added to cart');
+  refreshCartIfVisible();
 }
 
-function renderCart(){
+function renderCart(keepPanelOpen){
   const container = document.getElementById('cart-contents');
   const actions = document.getElementById('cart-actions');
   const note = document.getElementById('cart-note');
   const cart = getCart(); updateCartCount();
-  // collapse the search panel whenever the cart re-renders (e.g. after navigating away and back)
-  const addPanel = document.getElementById('cart-add-product-panel');
-  if(addPanel) addPanel.style.display = 'none';
+  // collapse the search panel whenever the cart is freshly opened via navigation
+  // (but not when we're just refreshing in place right after adding an item —
+  // that would annoyingly close the panel a user has open to add more items).
+  if(!keepPanelOpen){
+    const addPanel = document.getElementById('cart-add-product-panel');
+    if(addPanel) addPanel.style.display = 'none';
+  }
 
   if(role==='admin'){
     note.innerText = 'Build a proforma from the items below — edit the "Your Price" column before creating the invoice.';
     const addBtn = `<button class="btn-ghost" onclick="toggleCartAddPanel()">+ Add Product</button>`;
     if(cart.length===0){ container.innerHTML='<p>Your admin cart is empty.</p>'; actions.innerHTML=addBtn; return; }
-    let html = `<table class="data-table cart-table"><tr><th>Image</th><th>Item</th><th>Variant</th><th>HSN</th><th>GST</th><th>Qty</th><th>Original Price</th><th>Your Price</th><th>Taxable Amt</th><th></th></tr>`;
+    let html = `<table class="data-table cart-table"><tr><th>Image</th><th>Variant</th><th>Item</th><th>HSN</th><th>GST</th><th>Qty</th><th>Original Price</th><th>Your Price</th><th>Taxable Amt</th><th></th></tr>`;
     cart.forEach((c,idx)=>{
       const img = c.img || 'https://via.placeholder.com/60?text='+encodeURIComponent(c.itemCode);
       const taxable = Number(c.qty)*Number(c.manualPrice||c.originalPrice||0);
       html += `<tr>
         <td><img src="${img}"/></td>
-        <td>${c.itemName||c.itemCode}<div class="meta">${c.description||''}</div></td>
         <td>${c.variantCode}</td>
+        <td>${c.itemName||c.itemCode}<div class="meta">${c.description||''}</div></td>
         <td class="num">${c.hsn||''}</td>
         <td class="num">${c.gst||0}%</td>
         <td><input type="number" min="1" class="qty-input" value="${c.qty}" onchange="updateCartField(${idx},'qty',this.value)"/></td>
@@ -962,13 +993,13 @@ function renderCart(){
     note.innerText = 'Get a special quote for the products below.';
     const addBtn = `<button class="btn-ghost" onclick="toggleCartAddPanel()">+ Add Product</button>`;
     if(cart.length===0){ container.innerHTML='<p>Your cart is empty.</p>'; actions.innerHTML=addBtn; return; }
-    let html = `<table class="data-table cart-table"><tr><th>Image</th><th>Item Name</th><th>Variant Code</th><th>Description</th><th>Qty</th><th>Unit</th><th></th></tr>`;
+    let html = `<table class="data-table cart-table"><tr><th>Image</th><th>Variant Code</th><th>Item Name</th><th>Description</th><th>Qty</th><th>Unit</th><th></th></tr>`;
     cart.forEach((c,idx)=>{
       const img = c.img || 'https://via.placeholder.com/60?text='+encodeURIComponent(c.itemCode);
       html += `<tr>
         <td><img src="${img}"/></td>
-        <td>${c.itemName||c.itemCode}</td>
         <td>${c.variantCode}</td>
+        <td>${c.itemName||c.itemCode}</td>
         <td>${c.description||''}</td>
         <td><input type="number" min="1" class="qty-input" value="${c.qty}" onchange="updateCartField(${idx},'qty',this.value)"/></td>
         <td>${c.unit||''}</td>
@@ -1088,8 +1119,9 @@ function sendEnquiry(){
 /* ================= GLOBAL SEARCH ================= */
 function performSearch(){
   const query = document.getElementById('searchInput').value.trim().toLowerCase();
-  if(!query) return;
+  if(!query){ renderCategories(); return; }
   currentSearchResults = allData.filter(r=> (r['Item Code']||'').toLowerCase().includes(query) || (r['Item Name']||'').toLowerCase().includes(query) || (r['Category']||'').toLowerCase().includes(query));
+  currentCategory = null; currentItemCode = null;
   renderBreadcrumb('search');
   const container = document.getElementById('catalogue');
   container.innerHTML = `<h2 style="margin-top:14px">Search Results for "${query}"</h2><div class="grid"></div>`;
@@ -1105,7 +1137,8 @@ function performSearch(){
     grid.appendChild(div);
   });
 }
-function clearSearch(){ document.getElementById('searchInput').value=''; renderCategories(); }
+function clearSearch(){ document.getElementById('searchInput').value=''; currentSearchResults=null; renderCategories(); }
+function reopenSearchResults(){ performSearch(); }
 
 /* ================= PROFORMA BUILDER ================= */
 (function populateStateDropdown(){
@@ -1121,12 +1154,21 @@ function createProformaFromCart(){
   syncProformaFromCart();
   showSection('proforma');
 }
+// Builds the merged "Item / Variant / Description" text used in the proforma line item.
+function buildProformaDesc(itemName, variantCode, description){
+  let parts = [];
+  if(variantCode) parts.push(variantCode);
+  if(itemName) parts.push(itemName);
+  let text = parts.join(' - ');
+  if(description) text = text ? (text+' - '+description) : description;
+  return text;
+}
 // Fully REPLACES the current line items with a fresh copy of the admin cart.
 function syncProformaFromCart(){
   const cart = getCart();
   if(role!=='admin'){ return; }
   proformaItems = cart.map(c=>({
-    hsn: c.hsn||'', desc: (c.itemName?c.itemName+' - ':'')+(c.description||''),
+    hsn: c.hsn||'', desc: buildProformaDesc(c.itemName, c.variantCode, c.description),
     qty: Number(c.qty)||0, unit: c.unit||'Pcs', unitPrice: Number(c.manualPrice ?? c.originalPrice ?? 0),
     gst: Number(c.gst)||0
   }));
@@ -1141,7 +1183,7 @@ function mergeProformaFromCart(){
   if(cart.length===0){ showToast('Admin cart is empty',true); return; }
   cart.forEach(c=>{
     proformaItems.push({
-      hsn: c.hsn||'', desc: (c.itemName?c.itemName+' - ':'')+(c.description||''),
+      hsn: c.hsn||'', desc: buildProformaDesc(c.itemName, c.variantCode, c.description),
       qty: Number(c.qty)||0, unit: c.unit||'Pcs', unitPrice: Number(c.manualPrice ?? c.originalPrice ?? 0),
       gst: Number(c.gst)||0
     });
@@ -1202,7 +1244,7 @@ function addProformaItemFromSearch(i){
   const entry = pfSearchMatches[i];
   if(!entry) return;
   proformaItems.push({
-    hsn: entry['HSN Code']||'', desc: (entry['Item Name']?entry['Item Name']+' - ':'')+(entry['Description']||''),
+    hsn: entry['HSN Code']||'', desc: buildProformaDesc(entry['Item Name'], entry['Variant Code'], entry['Description']),
     qty: 1, unit: entry['Unit']||'Pcs', unitPrice: entry['_price']||0, gst: entry['_gst']||0
   });
   renderProformaItems();
@@ -1241,7 +1283,7 @@ function renderProformaItems(){
   if(proformaItems.length===0){
     wrap.innerHTML = '<p style="color:var(--steel)">No line items yet — sync from your admin cart, search &amp; add a product, or add a blank row.</p>';
   } else {
-    let html = `<table class="data-table pf-table"><tr><th>HSN</th><th>Item Code &amp; Description</th><th>Qty</th><th>Unit</th><th>Unit Price</th><th>GST%</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th></th></tr>`;
+    let html = `<table class="data-table pf-table"><tr><th>HSN</th><th>Variant, Item &amp; Description</th><th>Qty</th><th>Unit</th><th>Unit Price</th><th>GST%</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th><th></th></tr>`;
     proformaItems.forEach((item,i)=>{
       const c = calcLine(item);
       html += `<tr>
@@ -1327,13 +1369,17 @@ function amountInWords(num){
    drawn with doc.rect()/doc.text() after it (totals bar, amount-in-words,
    transport row, signatures) is placed at fixed coordinates and was
    previously able to run off the bottom of the page. This checks the
-   remaining space first and starts a fresh page when there isn't enough. */
+   remaining space first and starts a fresh page when there isn't enough.
+   PDF_TOP_GAP reserves room at the top of any newly-created page so that the
+   "PAGE n of N" header stamped in later never overlaps the first line of
+   content on that page. */
+const PDF_TOP_GAP = 16;
 function ensureSpace(doc, y, neededHeight, margin){
   margin = margin==null ? 8 : margin;
   const pageHeight = doc.internal.pageSize.getHeight();
   if(y + neededHeight > pageHeight - margin){
     doc.addPage();
-    return margin;
+    return PDF_TOP_GAP;
   }
   return y;
 }
@@ -1351,8 +1397,10 @@ function generateProformaPDF(){
   // Title bar
   doc.setFontSize(13); doc.setFont(undefined,'bold');
   doc.text('PROFORMA INVOICE', PW/2, y+5, {align:'center'});
-  doc.setFontSize(8); doc.setFont(undefined,'normal');
-  doc.text('PAGE 1 of 1', PW-M, y+4, {align:'right'});
+  // The page number ("PAGE n of N") is stamped once at the very end of PDF
+  // generation, after the real page count is known — a placeholder used to
+  // be drawn here too, which sat directly underneath (and visually
+  // overlapped) that later, correct stamp. Removed rather than duplicated.
   y+=8; doc.line(M,y,PW-M,y); y+=2;
 
   const leftW = 95, rightX = M+leftW+2, rightW = CW-leftW-2;
@@ -1445,31 +1493,59 @@ function generateProformaPDF(){
     return [i+1, item.hsn, item.desc, `${item.qty} ${item.unit}`, formatINRPdf(item.unitPrice),
       formatINRPdf(c.taxable), formatPct(c.cgstPct, c.cgstApplicable), formatPct(c.sgstPct, c.sgstApplicable), formatPct(c.igstPct, c.igstApplicable), formatINRPdf(c.total)];
   });
-  const totalsRowCount = 4; // Taxable / CGST / SGST / IGST subtotal rows drawn in the foot
+  // Sr./HSN/Unit Price widened so short numeric/currency values ("10",
+  // "82041110", "Rs. 36.00") no longer wrap onto multiple lines within
+  // their own column. The extra width is taken from the auto-sized
+  // description column rather than from the other money columns.
+  const PF_COL_STYLES = {0:{cellWidth:9,halign:'center'},1:{cellWidth:17},2:{cellWidth:'auto'},3:{cellWidth:14,halign:'center'},4:{cellWidth:19,halign:'right'},5:{cellWidth:22,halign:'right'},6:{cellWidth:11,halign:'center'},7:{cellWidth:11,halign:'center'},8:{cellWidth:11,halign:'center'},9:{cellWidth:24,halign:'right'}};
+  const itemTableStartPage = doc.internal.getNumberOfPages();
   doc.autoTable({
-    startY:y, margin:{left:M,right:M,top:M,bottom:16},
-    head:[['Sr.','HSN','Item Code & Description','Total Units','Unit Price','Taxable Amt','CGST','SGST','IGST','Total Amount']],
+    startY:y, margin:{left:M,right:M,top:PDF_TOP_GAP,bottom:16},
+    head:[['Sr.','HSN','Variant, Item & Description','Total Units','Unit Price','Taxable Amt','CGST','SGST','IGST','Total Amount']],
     body,
     theme:'grid',
     styles:{ fontSize:7, cellPadding:2, lineColor:[90,113,132], lineWidth:0.1, overflow:'linebreak' },
     headStyles:{ fillColor:[231,236,240], textColor:[11,42,69], fontStyle:'bold', fontSize:7 },
-    columnStyles:{0:{cellWidth:7,halign:'center'},1:{cellWidth:15},2:{cellWidth:'auto'},3:{cellWidth:16,halign:'center'},4:{cellWidth:22,halign:'right'},5:{cellWidth:26,halign:'right'},6:{cellWidth:12,halign:'center'},7:{cellWidth:12,halign:'center'},8:{cellWidth:12,halign:'center'},9:{cellWidth:26,halign:'right'}},
-    foot:[
-      ['','','','','Total Taxable Amount','','','','',formatINRPdf(t.taxable)],
-      ['','','','','CGST Amount','','','','',formatINRPdf(t.cgst)],
-      ['','','','','SGST Amount','','','','',formatINRPdf(t.sgst)],
-      ['','','','','IGST Amount','','','','',formatINRPdf(t.igst)],
+    columnStyles: PF_COL_STYLES
+    // NOTE: deliberately no `foot` here. jspdf-autotable repeats a `foot`
+    // block on every page the table spans, which is why the Total
+    // Taxable/CGST/SGST/IGST amounts used to show up — identically — on
+    // every intermediate page. Those figures are only meaningful once, after
+    // the very last line item, so they're now drawn manually below instead.
+  });
+  y = doc.lastAutoTable.finalY+2;
+
+  // Stamp every page the item table spilled onto — except the one it
+  // actually finished on — with a "Continued on next page..." note, since
+  // the real subtotal is shown only once, right after the last line item.
+  const itemTableEndPage = doc.internal.getNumberOfPages();
+  for(let p=itemTableStartPage; p<itemTableEndPage; p++){
+    doc.setPage(p);
+    const pageHeight = doc.internal.pageSize.getHeight();
+    doc.setFontSize(7.5); doc.setFont(undefined,'italic'); doc.setTextColor(90,113,132);
+    doc.text('Continued on next page...', PW-M, pageHeight-6, {align:'right'});
+    doc.setFont(undefined,'normal');
+  }
+  doc.setPage(itemTableEndPage);
+
+  // ---- Grand totals (Taxable / CGST / SGST / IGST) — shown once, directly
+  // under the last row of the item table, using the sum across ALL items
+  // regardless of how many pages the table above spanned. ----
+  y = ensureSpace(doc, y, 26);
+  doc.autoTable({
+    startY:y, margin:{left:M,right:M,top:PDF_TOP_GAP,bottom:16},
+    body:[
+      [{content:'Total Taxable Amount', colSpan:9, styles:{halign:'right'}}, formatINRPdf(t.taxable)],
+      [{content:'CGST Amount', colSpan:9, styles:{halign:'right'}}, formatINRPdf(t.cgst)],
+      [{content:'SGST Amount', colSpan:9, styles:{halign:'right'}}, formatINRPdf(t.sgst)],
+      [{content:'IGST Amount', colSpan:9, styles:{halign:'right'}}, formatINRPdf(t.igst)],
     ],
-    // Make the subtotal rows visually distinct from the item rows (matches the
-    // steel-100 shaded totals block used on the Proforma section on screen)
-    // instead of blending into the item table above them.
-    footStyles:{ fontStyle:'bold', textColor:[11,42,69], fillColor:[231,236,240], fontSize:7.5, lineWidth:0.15 },
-    didParseCell: function(data){
-      if(data.section==='foot'){
-        data.cell.styles.fillColor = [231,236,240];
-        if(data.column.index===4){ data.cell.styles.halign='right'; }
-        if(data.column.index===9){ data.cell.styles.halign='right'; data.cell.styles.textColor=[11,42,69]; data.cell.styles.fontStyle='bold'; }
-      }
+    theme:'grid',
+    styles:{ fontSize:7, cellPadding:{top:0.8,right:2,bottom:0.8,left:2}, lineColor:[90,113,132], lineWidth:0.15, fontStyle:'bold', textColor:[11,42,69] },
+    columnStyles: PF_COL_STYLES,
+    didParseCell:function(data){
+      data.cell.styles.fillColor = [231,236,240];
+      if(data.column.index===9){ data.cell.styles.textColor=[11,42,69]; data.cell.styles.fontStyle='bold'; }
     }
   });
   y = doc.lastAutoTable.finalY+2;

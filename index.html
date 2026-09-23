@@ -327,6 +327,90 @@ const CATEGORY_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR3dl_5ljK
 const SHEET_WEBHOOK = "https://script.google.com/macros/s/AKfycbzdFBrDKndXuVPtYcuN-IL4_MJQHdbmx33X33glJVxJeMC0LFrf5tgaD_iruxngekmX/exec";
 const WHATSAPP_NUMBER = "917986297302"; // without +
 
+/* ================= WATERMARKING =================
+   Draws a light, semi-transparent, tiled copy of the company logo onto
+   every product/category photo using a <canvas>, and swaps the <img>'s
+   src for the composited result. This bakes the watermark into the pixel
+   data, so anyone who right-click-saves the photo saves the watermarked
+   version too (a CSS overlay would not survive a save).
+
+   NOTE ON CORS: baking pixels into a canvas requires the browser to be
+   allowed to read the source image's pixels ("CORS-enabled" fetch). If an
+   image's host doesn't send the right CORS headers, the canvas becomes
+   "tainted" and export fails silently — in that case this code falls back
+   to showing the original, un-watermarked image rather than breaking the
+   catalogue. If you notice watermarks aren't appearing for some/all photos,
+   the image host is most likely the cause (see chat reply for how to check
+   and fix this).
+=================================================== */
+const WATERMARK_LOGO_URL = "https://lh3.googleusercontent.com/d/1AKGtjPgbofnWGQAiXk6UP8Es8OV8Lbr7";
+const WATERMARK_OPACITY = 0.16;   // 0 (invisible) – 1 (solid)
+const WATERMARK_SCALE = 0.30;     // logo width as a fraction of image width
+const WATERMARK_ROTATE_DEG = -22; // tilt of the tiled pattern
+
+const watermarkCache = new Map(); // original url -> data URL, or null if it can't be watermarked
+let watermarkLogoImgPromise = null;
+
+function loadImageEl(src, useCors){
+  return new Promise((resolve,reject)=>{
+    const img = new Image();
+    if(useCors) img.crossOrigin = 'anonymous';
+    img.onload = ()=>resolve(img);
+    img.onerror = ()=>reject(new Error('failed to load '+src));
+    img.src = src;
+  });
+}
+function getWatermarkLogo(){
+  if(!watermarkLogoImgPromise) watermarkLogoImgPromise = loadImageEl(WATERMARK_LOGO_URL, true);
+  return watermarkLogoImgPromise;
+}
+
+async function watermarkImage(url){
+  if(!url) return url;
+  if(watermarkCache.has(url)){ const cached = watermarkCache.get(url); return cached || url; }
+  try{
+    const [baseImg, logo] = await Promise.all([loadImageEl(url, true), getWatermarkLogo()]);
+    const canvas = document.createElement('canvas');
+    canvas.width = baseImg.naturalWidth || baseImg.width || 300;
+    canvas.height = baseImg.naturalHeight || baseImg.height || 300;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(baseImg, 0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.globalAlpha = WATERMARK_OPACITY;
+    const logoW = canvas.width * WATERMARK_SCALE;
+    const logoH = logoW * ((logo.naturalHeight/logo.naturalWidth) || 0.4);
+    ctx.translate(canvas.width/2, canvas.height/2);
+    ctx.rotate(WATERMARK_ROTATE_DEG * Math.PI/180);
+    const stepX = logoW * 1.7, stepY = logoH * 2.4;
+    const span = Math.max(canvas.width, canvas.height) * 1.5;
+    for(let y=-span; y<span; y+=stepY){
+      for(let x=-span; x<span; x+=stepX){
+        ctx.drawImage(logo, x - logoW/2, y - logoH/2, logoW, logoH);
+      }
+    }
+    ctx.restore();
+
+    const dataUrl = canvas.toDataURL('image/png');
+    watermarkCache.set(url, dataUrl);
+    return dataUrl;
+  }catch(e){
+    console.warn('Watermarking skipped (likely a CORS restriction on the image host):', url, e);
+    watermarkCache.set(url, null);
+    return url;
+  }
+}
+
+// Finds every <img data-wm-src="..."> inside `root` and swaps its src for a
+// watermarked version once ready. The image shows the plain original first
+// (so the page still feels fast) and is replaced in place moments later.
+function applyWatermarks(root){
+  root.querySelectorAll('img[data-wm-src]').forEach(img=>{
+    const src = img.getAttribute('data-wm-src');
+    watermarkImage(src).then(result=>{ if(result && img.isConnected) img.src = result; });
+  });
+}
+
 /* ================= STATE ================= */
 let allData = [], imageMap = {}, categoryImageMap = {};
 let currentCategory = null, currentItemCode = null, currentSearchResults = null;
@@ -410,10 +494,11 @@ function renderCategories(){
   categories.forEach(cat=>{
     const div = document.createElement('div'); div.className='card category-card';
     const catImg = categoryImageMap[cat] || 'https://via.placeholder.com/300x180?text='+encodeURIComponent(cat);
-    div.innerHTML = `<img src="${catImg}" alt="${escapeHtml(cat)}" class="card-image"/><div class="card-title">${escapeHtml(cat)}</div>`;
+    div.innerHTML = `<img src="${catImg}" data-wm-src="${catImg}" alt="${escapeHtml(cat)}" class="card-image"/><div class="card-title">${escapeHtml(cat)}</div>`;
     div.onclick = ()=> renderItems(cat);
     grid.appendChild(div);
   });
+  applyWatermarks(grid);
 }
 function renderItems(category){
   currentCategory=category; currentItemCode=null; currentSearchResults=null; renderBreadcrumb('category');
@@ -425,10 +510,11 @@ function renderItems(category){
     const div = document.createElement('div'); div.className='card';
     const img = imageMap[code] || 'https://via.placeholder.com/150?text='+encodeURIComponent(code);
     const item = allData.find(r=>r['Item Code']===code) || {};
-    div.innerHTML = `<img src="${img}" alt="${escapeHtml(code)}" class="card-image"/><div class="card-title">${escapeHtml(item['Item Name']||'')}</div><div class="card-code">${escapeHtml(code)}</div>`;
+    div.innerHTML = `<img src="${img}" data-wm-src="${img}" alt="${escapeHtml(code)}" class="card-image"/><div class="card-title">${escapeHtml(item['Item Name']||'')}</div><div class="card-code">${escapeHtml(code)}</div>`;
     div.onclick = ()=> renderItemDetail(code);
     grid.appendChild(div);
   });
+  applyWatermarks(grid);
 }
 function renderItemDetail(itemCode){
   currentItemCode = itemCode; renderBreadcrumb('item');
@@ -441,7 +527,7 @@ function renderItemDetail(itemCode){
   container.innerHTML = `
     <h2 style="margin-top:14px">${escapeHtml(first['Item Name']||'')}</h2>
     <p class="meta">Item Code: ${escapeHtml(first['Item Code']||'')} · HSN: ${escapeHtml(first['HSN Code']||'')}</p>
-    <img src="${img}" alt="${escapeHtml(itemCode)}" class="detail-image"/>
+    <img src="${img}" data-wm-src="${img}" alt="${escapeHtml(itemCode)}" class="detail-image"/>
     <p><em>${escapeHtml(first['Specs']||'')}</em></p>
     <table class="data-table">
       <tr>
@@ -459,6 +545,7 @@ function renderItemDetail(itemCode){
       }).join('')}
     </table>
   `;
+  applyWatermarks(container);
 }
 function addToCartPrompt(itemCodeEnc,variantEnc,descEnc){
   pendingCartItem = {
@@ -596,7 +683,7 @@ function renderCart(keepPanelOpen){
   cart.forEach((c,idx)=>{
     const img = c.img || 'https://via.placeholder.com/60?text='+encodeURIComponent(c.itemCode);
     html += `<tr>
-      <td><img src="${img}"/></td>
+      <td><img src="${img}" data-wm-src="${img}"/></td>
       <td>${escapeHtml(c.variantCode)}</td>
       <td>${escapeHtml(c.itemName||c.itemCode)}</td>
       <td>${escapeHtml(c.description||'')}</td>
@@ -612,6 +699,7 @@ function renderCart(keepPanelOpen){
     <button class="btn" onclick="downloadCartPDF()">Download as PDF</button>
     <button class="btn btn-amber" onclick="openCartEnquiryModal()">Send Cart as Enquiry (WhatsApp)</button>
     <button class="btn-ghost" onclick="clearCart()">Clear Cart</button>`;
+  applyWatermarks(container);
 }
 function updateCartField(index,field,val){
   const cart=getCart();
@@ -625,9 +713,12 @@ function clearCart(){ if(!confirm('Clear cart?')) return; localStorage.removeIte
    Fetches an image and converts it to a data URL so jsPDF can embed it.
    If the image host doesn't allow cross-origin reads (no CORS headers —
    common with hotlinked Google Drive URLs), this silently returns null and
-   the PDF is generated without that picture rather than failing outright. */
+   the PDF is generated without that picture rather than failing outright.
+   NOTE: this reuses the already-watermarked version from the cache where
+   available, so the PDF also carries the watermark. */
 async function loadImageAsDataURL(url){
   if(!url) return null;
+  if(watermarkCache.has(url) && watermarkCache.get(url)) return watermarkCache.get(url);
   try{
     const res = await fetch(url, { mode:'cors' });
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -729,10 +820,11 @@ function performSearch(){
     const div=document.createElement('div'); div.className='card';
     const img=imageMap[code]||'https://via.placeholder.com/150?text='+encodeURIComponent(code);
     const itemName = allData.find(r=>r['Item Code']===code)?.['Item Name']||'';
-    div.innerHTML = `<img src="${img}" alt="${escapeHtml(code)}" class="card-image"/><div class="card-title">${escapeHtml(itemName||code)}</div>`;
+    div.innerHTML = `<img src="${img}" data-wm-src="${img}" alt="${escapeHtml(code)}" class="card-image"/><div class="card-title">${escapeHtml(itemName||code)}</div>`;
     div.onclick = ()=> renderItemDetail(code);
     grid.appendChild(div);
   });
+  applyWatermarks(grid);
 }
 function clearSearch(){ document.getElementById('searchInput').value=''; currentSearchResults=null; renderCategories(); }
 function reopenSearchResults(){ performSearch(); }

@@ -695,7 +695,7 @@ function sendCartEnquiry(){
   let msg = `Enquiry from ${name} (City: ${city||'N/A'})\nMobile: ${mobile}${email?('\nEmail: '+email):''}\n\nItems:`;
   cart.forEach(c=>{ msg += `\n- ${c.itemName||c.itemCode} | Variant: ${c.variantCode} | Description: ${c.description} | Qty: ${c.qty} ${c.unit||''}`; });
   const wa = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
-  if(SHEET_WEBHOOK){ try{ fetch(SHEET_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'cart_enquiry',name,city,mobile,email,cart})}); }catch(e){ console.warn('sheet save failed',e); } }
+  if(SHEET_WEBHOOK){ try{ fetch(SHEET_WEBHOOK,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({type:'cart_enquiry',name,city,mobile,email,cart})}); }catch(e){ console.warn('sheet save failed',e); } }
   window.open(wa,'_blank'); closeCartModal();
 }
 
@@ -708,7 +708,7 @@ function sendEnquiry(){
   const req=document.getElementById('enq-requirements').value.trim();
   if(!name||!mobile||!city||!req){ alert('Please enter Name, Mobile, City and Requirements'); return; }
   const msg = `Enquiry from ${name} (City: ${city||'N/A'})\nMobile: ${mobile}${email?('\nEmail: '+email):''}\n\nRequirement:\n${req}`;
-  if(SHEET_WEBHOOK){ try{ fetch(SHEET_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'enquiry',name,email,mobile,city,req})}); }catch(e){ console.warn('sheet save failed',e); } }
+  if(SHEET_WEBHOOK){ try{ fetch(SHEET_WEBHOOK,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({type:'enquiry',name,email,mobile,city,req})}); }catch(e){ console.warn('sheet save failed',e); } }
   const wa = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
   window.open(wa,'_blank'); alert('Opening WhatsApp to send your enquiry');
 }
